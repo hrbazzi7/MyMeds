@@ -158,3 +158,72 @@ Verification script: `scripts/verify-db.ts` (excluded from Next.js build via `ts
 ### Build status
 - `npm run lint` — ✓ zero warnings or errors
 - `npm run build` — ✓ compiled successfully
+
+---
+
+## Phase 3 — Patient Assessment Workflow (2026-06-10)
+
+### What was built
+
+**Route: `app/assess/[token]/page.tsx`** (Server Component)
+- Token validation on every request: must exist, unused, unexpired
+- Invalid/expired/used token → `InvalidToken` component ("link no longer available")
+- First valid open: sets `opened_at`, status → `in_progress`, logs `assessment_opened`
+- Passes `assessmentId` + `tokenId` to `AssessmentFlow` client component; no PHI in props
+
+**Server Actions: `app/assess/[token]/actions.ts`**
+- `verifyDob(assessmentId, dob)`: re-validates assessment exists; counts `dob_failed` audit logs as the server-side attempt counter; returns generic error on mismatch (never confirms whether a record exists); on 5th failure marks token `used = true`, status → `manual_call_required`, returns `locked: true`; on success logs `dob_verified` + `assessment_started`
+- `submitAssessment(assessmentId, tokenId, answers)`: re-validates token is still valid before writing; saves all 9 answer fields; sets `submitted_at = now()`; sets `status = 'needs_review'` (rules engine deferred to Phase 4 per spec); marks token `used = true`; logs `assessment_submitted`
+
+**Client Component: `components/assess/AssessmentFlow.tsx`**
+- All 4 screens managed via React `useState` (no PHI in URLs, no PHI in client storage, in-memory only)
+- Screen 1 → 2 advance gated on successful `verifyDob` server action
+- Screens 2–3 advance on "Continue" once all questions answered
+- Screen 4 submit gated on both refill confirmation questions answered
+- Edit-from-review: "Edit" buttons on Screen 4 set screen state back to 2 or 3; existing answers preserved
+
+**Screen components:**
+- `Screen1Dob`: `<input type="date">` (native date picker for older users; avoids typed input); `useTransition` for pending state; shows error on failure, disables form on lockout
+- `Screen2Adherence`: three Yes/No large-button questions (missed_doses, medication_changes, surgery_upcoming); selected Yes highlighted amber, No highlighted green; 56px touch targets
+- `Screen3Symptoms`: 0–10 pain score as 11 tap-target buttons (64×64px, color-coded green/amber/red); Fever / Active Infection / Pregnancy / None checklist; None is mutually exclusive — selecting None clears all others, selecting any symptom clears None; enforced in `toggleSymptom`
+- `Screen4Review`: review cards for Adherence + Symptoms with Edit links; two Yes/No refill confirmation questions (`refill_confirmed`, `delivery_approved`); Submit calls `submitAssessment` Server Action
+
+**`components/assess/InvalidToken.tsx`**: neutral "link no longer available" page; no pharmacy-specific PHI; instructs patient to call
+
+### Schema fix: `types/database.ts`
+- Added `Relationships: []` to each table definition and `Views`/`Functions` to schema — required by `@supabase/postgrest-js` ≥ 2.x for TypeScript type inference. Without these, `.insert()` resolved to `never[]`. No runtime or migration impact; compile-time type fix only.
+
+### Audit actions logged per step
+| Trigger | Action(s) |
+|---|---|
+| First valid page load | `assessment_opened` |
+| DOB mismatch | `dob_failed` |
+| DOB correct | `dob_verified`, `assessment_started` |
+| 5th DOB failure | `dob_failed` (5th), token invalidated, status → `manual_call_required` |
+| Assessment submit | `assessment_submitted` |
+
+### Phase 4 handoff note
+`submitAssessment` sets `status = 'needs_review'` unconditionally. The clinical rules engine (Phase 4) is the only thing that should ever set `status = 'completed'`, `risk_outcome`, `refill_disposition`, or create alerts. No auto-completion logic exists in Phase 3 — this is intentional per spec.
+
+### Design constraints honored
+- Mobile-first, `max-w-sm` card on `bg-gray-50`; looks correct at ~375px
+- All buttons `min-h-[52px]` or `min-h-[56px]` (≥44px); pain score buttons 64×64px
+- DOB is the only typed input; all other inputs are tap targets
+- No PHI in URLs (screen nav is React state, not URL params)
+- No PHI in console or client storage (React in-memory state only)
+- `verifyDob` generic error message never confirms a patient record exists
+
+### Verification
+- `scripts/setup-test-token.ts` creates test patient (DOB 1975-03-22) + assessment + 96h token
+- `scripts/test-phase3-actions.ts` — 18/18 checks passed:
+  - `assessment_opened` logged on first page load; `opened_at` and `status = in_progress` set
+  - DOB failure increments `dob_failed` counter
+  - DOB success logs `dob_verified` + `assessment_started`
+  - Lockout at 5 failures: token `used = true`, status `manual_call_required`
+  - Submit saves all 9 answer fields, sets `submitted_at`, `status = needs_review`, token `used = true`, logs `assessment_submitted`
+- Invalid token URL → "This link is no longer available" page (verified via curl)
+- Valid token URL → "Verify Your Identity" DOB screen (verified via curl)
+
+### Build status
+- `npm run lint` — ✓ zero warnings or errors
+- `npm run build` — ✓ compiled successfully; `/assess/[token]` is dynamic server-rendered

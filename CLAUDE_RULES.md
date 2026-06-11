@@ -1,7 +1,11 @@
 Development Rules
-Follow MYMEDS_SPEC.md (v0.2) exactly. It is the single source of truth. If the spec is ambiguous, state your assumption in BUILD_LOG.md — do not silently improvise. If you must deviate from the spec to make something work, document the deviation and the reason.
+
+Follow MYMEDS_SPEC.md (v0.3) exactly. It is the single source of truth. If the spec is ambiguous, state your assumption in BUILD_LOG.md — do not silently improvise. If you must deviate from the spec to make something work, document the deviation and the reason.
+
 This is an MVP for a 50-patient pilot.
+
 Do NOT build in Phases 1–7
+
 
 Staff authentication or user accounts (this is Phase 8 — see below)
 Epic, CPR+, or Therigy integrations
@@ -11,9 +15,13 @@ Copay assistance or prior authorization workflows
 White labeling
 PDC calculation (cut from MVP — see spec; never approximate or fabricate it)
 
+
 Phase 8 rule (read this)
+
 Staff authentication, real pharmacist identity on sign-off, and BAAs with Twilio and Supabase are REQUIRED before any real patient data enters this system. Phases 1–7 run on seed data only. Until Phase 8 ships, every deployment must sit behind platform-level password protection (e.g. Vercel protection) — that is infrastructure config, not an auth system, and does not violate the rule above.
+
 Code rules
+
 
 All code in TypeScript.
 Keep code simple; prefer readable code over abstraction. Do not overengineer.
@@ -24,7 +32,9 @@ No placeholder code. Every button performs its real action; every form saves rea
 No PHI in SMS bodies, URLs, console logs, or client-side storage.
 Generate tokens with the crypto module, never Math.random.
 
+
 Process rules
+
 
 Before each work session: read MYMEDS_SPEC.md, this file, and BUILD_LOG.md in full.
 Before finishing any work: run npm run lint and npm run build, fix every error, and re-run until both pass. Never report success on a broken build.
