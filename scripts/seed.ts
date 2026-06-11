@@ -964,16 +964,81 @@ async function main() {
     ]);
   });
 
-  console.log("\n✓ Seed complete — 40 patients inserted.\n");
+  // ── Group M: Phase 7 PDF verification patients (2 patients) ─────────────────
+
+  // M1: long name, ALL 3 symptoms (fever+infection+pregnancy), clinical_hold RESOLVED
+  //     PDF verification: long name wrapping + full symptoms + alert oversight block
+  await seedGroup("M1 PDF-verify long-name all-symptoms hold resolved (Enbrel)", async () => {
+    const pid = await insertPatient({
+      name: "Bartholomew Alexander Henderson-Wright III",
+      dobYear: 1968,
+      medication: med(0),
+      next_refill_date: daysFromNow(0),
+    });
+    const aid = await insertAssessment({
+      patient_id: pid, status: "completed",
+      risk_outcome: "clinical_hold", refill_disposition: "held",
+      missed_doses: true, medication_changes: false, hospitalized: false,
+      recent_vaccination: false, surgery_upcoming: false, pain_score: 9,
+      fever: true, infection: true, pregnancy_status: true,
+      refill_confirmed: true, delivery_approved: true,
+      submitted_at: daysAgo(2), completed_at: daysAgo(1),
+    });
+    await insertAlert({
+      patient_id: pid, assessment_id: aid, severity: "hold",
+      escalation_reason: "fever, active infection, pregnancy",
+      resolved: true,
+      pharmacist_notes:
+        "Complex biologic case. Hold confirmed per clinical protocol. " +
+        "Patient referred to rheumatologist for urgent review. " +
+        "Do not dispense until specialist clearance received.",
+      reviewed_by: "Dr. Sarah Chen, PharmD, RPh",
+      reviewed_at: daysAgo(1),
+    });
+    await insertAuditLogs([
+      { patient_id: pid, assessment_id: aid, action: "sms_sent" },
+      { patient_id: pid, assessment_id: aid, action: "assessment_submitted" },
+      { patient_id: pid, assessment_id: aid, action: "risk_evaluated" },
+      { patient_id: pid, assessment_id: aid, action: "clinical_hold_created" },
+      { patient_id: pid, assessment_id: aid, action: "alert_resolved" },
+    ]);
+  });
+
+  // M2: logged, pain=5, unattested — PDF verification: clinical note block + pending attestation
+  await seedGroup("M2 PDF-verify logged pain=5 unattested (Humira)", async () => {
+    const pid = await insertPatient({
+      name: "Priscilla Vandenberg",
+      dobYear: 1979,
+      medication: med(1),
+      next_refill_date: daysFromNow(3),
+    });
+    const aid = await insertAssessment({
+      patient_id: pid, status: "completed",
+      risk_outcome: "logged", refill_disposition: "approved",
+      missed_doses: false, medication_changes: false, hospitalized: false,
+      recent_vaccination: false, surgery_upcoming: false, pain_score: 5,
+      fever: false, infection: false, pregnancy_status: false,
+      refill_confirmed: true, delivery_approved: true,
+      submitted_at: daysAgo(1), completed_at: daysAgo(1),
+    });
+    await insertAuditLogs([
+      { patient_id: pid, assessment_id: aid, action: "sms_sent" },
+      { patient_id: pid, assessment_id: aid, action: "assessment_submitted" },
+      { patient_id: pid, assessment_id: aid, action: "risk_evaluated" },
+    ]);
+  });
+
+  console.log("\n✓ Seed complete — 42 patients inserted.\n");
 
   console.log("Summary of coverage:");
-  console.log("  Status:         pending (4), in_progress (2), needs_review (9), completed (12), manual_call_required (11), plus 2 completed-resolved");
-  console.log("  Risk outcome:   auto_approved (8), logged (5), flagged (8), clinical_hold (7), null (6)");
-  console.log("  Disposition:    approved (15), pending_review (5), held (5), declined_by_patient (2), null (13)");
-  console.log("  Alert severity: hold (6 unresolved + 3 resolved = 9), flag (6 unresolved + 2 resolved = 8)");
-  console.log("  Attestation:    attested (5), awaiting (8)");
+  console.log("  Status:         pending (4), in_progress (2), needs_review (9), completed (14), manual_call_required (11), plus 2 completed-resolved");
+  console.log("  Risk outcome:   auto_approved (8), logged (6), flagged (8), clinical_hold (8), null (6)");
+  console.log("  Disposition:    approved (16), pending_review (5), held (6), declined_by_patient (2), null (13)");
+  console.log("  Alert severity: hold (6 unresolved + 4 resolved = 10), flag (6 unresolved + 2 resolved = 8)");
+  console.log("  Attestation:    attested (5), awaiting (9)");
   console.log("  Consent:        sms_consent=false (1), sms_opted_out=true (1)");
   console.log("  Call queue (7): non-responder, SMS failure, DOB lockout, refill declined, address change, no consent, opted-out");
+  console.log("  PDF-verify (2): M1 long-name all-symptoms hold resolved, M2 logged unattested");
 }
 
 main().catch((e) => {

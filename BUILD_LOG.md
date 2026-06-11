@@ -562,3 +562,82 @@ All steps performed with Playwright (headless Chromium) against `http://localhos
 ### Build status
 - `npm run lint` — ✓ zero warnings or errors
 - `npm run build` — ✓ compiled successfully; `/` is dynamic server-rendered
+
+---
+
+## Phase 7 — PDF Generation (2026-06-11)
+
+### What was built
+
+**`lib/pdf.ts`** — client-side only; exports `generateAssessmentPdf(data: PdfData): void`
+
+- Uses `jsPDF` (letter format, portrait, mm units) with manual Y-cursor layout
+- `ensureSpace(needed)` adds a new page when remaining height < needed
+- Section headers rendered in bold uppercase blue with underline rule
+- `dataRow(label, value)` renders a bold label at left + auto-wrapped value starting at fixed 68 mm offset; advances Y by the number of wrapped lines
+- `bodyText(text, italic?)` renders smaller gray italic/normal multi-line text; used for prose notes and disclaimers
+- All adherence data labeled "patient-reported"; no PDC anywhere in the output
+- Content blocks in spec order:
+  1. Title + generation timestamp
+  2. Patient Information (name, DOB, medication)
+  3. Assessment Data (all 9 questions: missed doses, med changes, hospitalized, recent vaccination, upcoming surgery, pain score, symptoms, refill confirmation, delivery address)
+  4. Self-Reported Adherence section — re-states missed doses with explicit "patient-reported" label; includes paragraph: *"No PDC (Proportion of Days Covered) calculation is performed. This system records patient self-report only."*
+  5. System Data (risk outcome, refill disposition, submission time, assessment ID)
+  6. Clinical Note — present only for `risk_outcome = "logged"`; states pain score and "no clinical red flags identified"
+  7. Clinician Oversight — for alert cases (flagged/hold): "Reviewed by / Reviewed on / Alert reason / Pharmacist notes" when resolved; "Pending clinical review" when unresolved. For all other cases: "Attested by / Attested on" when attested; "Pending attestation" when not.
+  8. Wet-ink signature block (Signature line + Date line)
+- Filename: `{sanitized_name}_assessment_{YYYY-MM-DD}.pdf`
+
+**`app/actions.ts`** — added `fetchAssessmentForPdf(assessmentId)`
+
+- Fetches assessment, patient (name/DOB/medication), and most recent alert (resolved preferred over unresolved) in 3 sequential DB calls
+- Logs `pdf_generated` audit entry after fetch
+- Returns `{ ok: true, data: PdfData }` or `{ ok: false, error: string }` (never throws)
+
+**`types/index.ts`** — added `PdfData` export type (26 fields); imported by both `app/actions.ts` (server) and `lib/pdf.ts` (client)
+
+**`components/dashboard/PdfButton.tsx`** — `"use client"` component
+
+- "↓ PDF" button; calls `fetchAssessmentForPdf` Server Action then `generateAssessmentPdf` inside `useTransition`
+- Disabled during pending; shows inline error on failure
+- Renders "—" placeholder for assessments without `submitted_at`
+
+**`components/dashboard/AssessmentTable.tsx`** — added 8th column "Report"
+
+- Shows `<PdfButton assessmentId={row.id} />` for any row where `submitted_at !== null`
+- Empty slot (—) for pending/in-progress assessments
+- `colSpan` on empty state row updated from 7 → 8
+
+**`scripts/seed.ts`** — added Group M (2 patients)
+
+| Patient | Purpose |
+|---|---|
+| M1: SEED_Bartholomew Alexander Henderson-Wright III | Long name, ALL 3 symptoms (fever + active infection + pregnancy), clinical_hold resolved with pharmacist notes — tests name wrapping + full symptom list + alert oversight block |
+| M2: SEED_Priscilla Vandenberg | Logged pain=5, unattested — tests clinical note section + "Pending attestation" oversight block |
+
+Total seed patients: 42.
+
+### Design decisions
+
+- `lib/pdf.ts` has no `"use client"` directive but is only imported from client components; Next.js bundles it client-side via the import graph. jsPDF's browser APIs (`Blob`, `URL.createObjectURL`) are called at runtime only, not at import time.
+- `PdfData` defined in `types/index.ts` rather than `app/actions.ts` so `lib/pdf.ts` can import it without pulling in the `"use server"` module boundary.
+- The Server Action re-exports `PdfData` via `export type { PdfData }` for components that need both the type and the action from one import path.
+- `fetchAssessmentForPdf` makes 3 DB round-trips (assessment, patient, alert) rather than one JOIN to keep the query simple; this is adequate for the 50-patient pilot.
+- Playwright was used temporarily for download verification and removed from the project scripts directory after use.
+
+### Verification (in dev server with seed data)
+
+Three PDFs generated via Playwright download capture, then spot-checked by reading raw PDF bytes for key string literals:
+
+| PDF | Patient | Checks |
+|---|---|---|
+| 1 | SEED_Bartholomew Alexander Henderson-Wright III | Title ✓, Patient name ✓, Fever ✓, Active Infection ✓, Pregnancy ✓, No PDC ✓, Self-Reported Adherence section ✓, Clinical Hold outcome ✓, Reviewed by Dr. Sarah Chen ✓, pharmacist notes ("biologic") ✓, Signature line ✓ |
+| 2 | SEED_Priscilla Vandenberg | Title ✓, Patient name ✓, Pain score 5 ✓, No PDC ✓, Logged outcome ✓, CLINICAL NOTE section ✓, "Moderate pain" ✓, "no clinical red flags" ✓, "Pending attestation" ✓, Signature line ✓ |
+| 3 | SEED_Alice Abrams (A1) | Title ✓, Patient name ✓, Auto-Approved outcome ✓, No PDC ✓, NO clinical note section ✓ (correct — auto-approved path), Attested by Dr. Sarah Chen ✓, Signature line ✓ |
+
+All 3 PDFs: 9–10 KB each, downloaded successfully from "↓ PDF" buttons in the assessment table.
+
+### Build status
+- `npm run seed` — ✓ 42 patients inserted (40 original + 2 Phase 7 PDF-verify patients)
+- `npm run lint` — ✓ zero warnings or errors
+- `npm run build` — ✓ compiled successfully; dashboard `/` 119 kB first-load JS (includes jsPDF bundle)

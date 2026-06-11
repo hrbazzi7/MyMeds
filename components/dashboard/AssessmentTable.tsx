@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { AssessmentRow } from "@/app/actions";
 import type { AssessmentStatus, RiskOutcome, RefillDisposition } from "@/types/index";
+import PdfButton from "@/components/dashboard/PdfButton";
 
 type Filter =
   | "all"
@@ -168,12 +169,13 @@ export default function AssessmentTable({ assessments }: { assessments: Assessme
               <th className="text-left px-4 py-3 font-medium">Refill Disposition</th>
               <th className="text-left px-4 py-3 font-medium">Escalation Reason</th>
               <th className="text-left px-4 py-3 font-medium">Submission Date</th>
+              <th className="text-left px-4 py-3 font-medium">Report</th>
             </tr>
           </thead>
           <tbody>
             {paged.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-400">
+                <td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-400">
                   No assessments found.
                 </td>
               </tr>
@@ -222,6 +224,13 @@ export default function AssessmentTable({ assessments }: { assessments: Assessme
                         year: "numeric",
                       })
                     : <span className="text-gray-300">—</span>}
+                </td>
+                <td className="px-4 py-3">
+                  {row.submitted_at ? (
+                    <PdfButton assessmentId={row.id} />
+                  ) : (
+                    <span className="text-gray-300 text-xs">—</span>
+                  )}
                 </td>
               </tr>
             ))}

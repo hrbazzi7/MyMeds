@@ -10,7 +10,10 @@ import type {
   RiskOutcome,
   RefillDisposition,
   AlertSeverity,
+  PdfData,
 } from "@/types/index";
+
+export type { PdfData };
 
 // ── Return types ──────────────────────────────────────────────────────────────
 
@@ -679,6 +682,87 @@ export async function attestAssessment(
 
   revalidatePath("/");
   return { ok: true };
+}
+
+// ── Fetch assessment data for PDF generation ──────────────────────────────────
+
+export async function fetchAssessmentForPdf(
+  assessmentId: string
+): Promise<{ ok: true; data: PdfData } | { ok: false; error: string }> {
+  const db = createServerClient();
+
+  const { data: assessment, error: assErr } = await db
+    .from("assessments")
+    .select("*")
+    .eq("id", assessmentId)
+    .single();
+
+  if (assErr || !assessment) return { ok: false, error: "Assessment not found" };
+
+  const { data: patient, error: patErr } = await db
+    .from("patients")
+    .select("full_name, dob, medication")
+    .eq("id", assessment.patient_id)
+    .single();
+
+  if (patErr || !patient) return { ok: false, error: "Patient not found" };
+
+  // Most recent alert for this assessment — resolved preferred, else unresolved
+  const { data: resolvedAlert } = await db
+    .from("alerts")
+    .select("escalation_reason, pharmacist_notes, reviewed_by, reviewed_at")
+    .eq("assessment_id", assessmentId)
+    .eq("resolved", true)
+    .order("reviewed_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const { data: anyAlert } = await db
+    .from("alerts")
+    .select("escalation_reason, pharmacist_notes, reviewed_by, reviewed_at")
+    .eq("assessment_id", assessmentId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const alertData = resolvedAlert ?? anyAlert;
+
+  await db.from("audit_logs").insert({
+    patient_id: assessment.patient_id,
+    assessment_id: assessmentId,
+    action: "pdf_generated" as const,
+  });
+
+  return {
+    ok: true,
+    data: {
+      full_name: patient.full_name,
+      dob: patient.dob,
+      medication: patient.medication,
+      assessment_id: assessmentId,
+      patient_id: assessment.patient_id,
+      missed_doses: assessment.missed_doses,
+      medication_changes: assessment.medication_changes,
+      hospitalized: assessment.hospitalized,
+      recent_vaccination: assessment.recent_vaccination,
+      surgery_upcoming: assessment.surgery_upcoming,
+      pain_score: assessment.pain_score,
+      fever: assessment.fever,
+      infection: assessment.infection,
+      pregnancy_status: assessment.pregnancy_status,
+      refill_confirmed: assessment.refill_confirmed,
+      delivery_approved: assessment.delivery_approved,
+      risk_outcome: assessment.risk_outcome,
+      refill_disposition: assessment.refill_disposition,
+      submitted_at: assessment.submitted_at,
+      attested_by: assessment.attested_by,
+      attested_at: assessment.attested_at,
+      escalation_reason: alertData?.escalation_reason ?? null,
+      pharmacist_notes: alertData?.pharmacist_notes ?? null,
+      reviewed_by: alertData?.reviewed_by ?? null,
+      reviewed_at: alertData?.reviewed_at ?? null,
+    },
+  };
 }
 
 // ── Attest all pending ────────────────────────────────────────────────────────

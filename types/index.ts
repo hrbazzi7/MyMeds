@@ -109,3 +109,33 @@ export type AuditLog = {
   action: AuditAction;
   timestamp: string;
 };
+
+// ─── PDF generation data shape ────────────────────────────────────────────────
+
+export type PdfData = {
+  full_name: string;
+  dob: string;
+  medication: string;
+  assessment_id: string;
+  patient_id: string;
+  missed_doses: boolean | null;
+  medication_changes: boolean | null;
+  hospitalized: boolean | null;
+  recent_vaccination: boolean | null;
+  surgery_upcoming: boolean | null;
+  pain_score: number | null;
+  fever: boolean | null;
+  infection: boolean | null;
+  pregnancy_status: boolean | null;
+  refill_confirmed: boolean | null;
+  delivery_approved: boolean | null;
+  risk_outcome: RiskOutcome | null;
+  refill_disposition: RefillDisposition | null;
+  submitted_at: string | null;
+  attested_by: string | null;
+  attested_at: string | null;
+  escalation_reason: string | null;
+  pharmacist_notes: string | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+};
