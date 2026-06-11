@@ -106,6 +106,8 @@ export async function verifyDob(
 export type AssessmentAnswers = {
   missed_doses: boolean;
   medication_changes: boolean;
+  hospitalized: boolean;
+  recent_vaccination: boolean;
   surgery_upcoming: boolean;
   pain_score: number;
   fever: boolean;
@@ -155,6 +157,8 @@ export async function submitAssessment(
     .update({
       missed_doses: answers.missed_doses,
       medication_changes: answers.medication_changes,
+      hospitalized: answers.hospitalized,
+      recent_vaccination: answers.recent_vaccination,
       surgery_upcoming: answers.surgery_upcoming,
       pain_score: answers.pain_score,
       fever: answers.fever,

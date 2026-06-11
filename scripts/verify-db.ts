@@ -68,6 +68,7 @@ async function run() {
       medication:      "Enbrel",
       disease_state:   "Rheumatoid Arthritis",
       next_refill_date: "2026-07-10",
+      sms_consent:     true,
     })
     .select("id, full_name")
     .single();
@@ -98,7 +99,8 @@ async function run() {
   const { error: anonInsErr } = await anon
     .from("patients")
     .insert({ full_name: "__anon_attack__", dob: "1990-01-01", phone: "+10000000000",
-              medication: "x", disease_state: "x", next_refill_date: "2026-01-01" });
+              medication: "x", disease_state: "x", next_refill_date: "2026-01-01",
+              sms_consent: false });
   ok("anon INSERT → rejected by RLS", anonInsErr !== null,
     anonInsErr ? "" : "Expected a policy violation error, got none");
 
@@ -141,13 +143,66 @@ async function run() {
       }
     }
 
-    // audit_action — sample of 4 representative values
+    // audit_action — original 4 representative values
     const auditSamples = ["sms_sent","dob_verified","pdf_generated","manual_call_flagged"] as const;
     for (const action of auditSamples) {
       const { error: e } = await svc
         .from("audit_logs")
         .insert({ patient_id: patientId, action });
       ok(`audit_action '${action}' accepted`, e === null, e?.message ?? "");
+    }
+
+    // audit_action — v0.3 new values
+    for (const action of ["sms_opted_out", "assessment_attested"] as const) {
+      const { error: e } = await svc
+        .from("audit_logs")
+        .insert({ patient_id: patientId, action });
+      ok(`audit_action '${action}' accepted (v0.3)`, e === null, e?.message ?? "");
+    }
+
+    // patients v0.3 columns: sms_consent, sms_opted_out
+    const { data: patRow } = await svc
+      .from("patients")
+      .select("sms_consent, sms_opted_out")
+      .eq("id", patientId)
+      .single();
+    ok("patients.sms_consent column exists and is boolean", typeof patRow?.sms_consent === "boolean",
+      JSON.stringify(patRow));
+    ok("patients.sms_opted_out column exists and defaults to false", patRow?.sms_opted_out === false,
+      JSON.stringify(patRow));
+
+    // assessments v0.3 columns: hospitalized, recent_vaccination, attested_by, attested_at
+    if (assId) {
+      const { data: assRow } = await svc
+        .from("assessments")
+        .select("hospitalized, recent_vaccination, attested_by, attested_at")
+        .eq("id", assId)
+        .single();
+      ok("assessments.hospitalized column exists (nullable bool)", "hospitalized" in (assRow ?? {}),
+        JSON.stringify(assRow));
+      ok("assessments.recent_vaccination column exists (nullable bool)", "recent_vaccination" in (assRow ?? {}),
+        JSON.stringify(assRow));
+      ok("assessments.attested_by column exists (nullable text)", "attested_by" in (assRow ?? {}),
+        JSON.stringify(assRow));
+      ok("assessments.attested_at column exists (nullable timestamptz)", "attested_at" in (assRow ?? {}),
+        JSON.stringify(assRow));
+
+      // Write and read back the new clinical fields
+      const { error: updErr } = await svc
+        .from("assessments")
+        .update({ hospitalized: true, recent_vaccination: false })
+        .eq("id", assId);
+      ok("assessments v0.3 fields writable", updErr === null, updErr?.message ?? "");
+
+      const { data: assUpdated } = await svc
+        .from("assessments")
+        .select("hospitalized, recent_vaccination")
+        .eq("id", assId)
+        .single();
+      ok("hospitalized=true round-trips correctly", assUpdated?.hospitalized === true,
+        JSON.stringify(assUpdated));
+      ok("recent_vaccination=false round-trips correctly", assUpdated?.recent_vaccination === false,
+        JSON.stringify(assUpdated));
     }
 
     // Bad enum value must be rejected

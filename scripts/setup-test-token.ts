@@ -51,6 +51,7 @@ async function setup() {
       next_refill_date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
         .toISOString()
         .slice(0, 10),
+      sms_consent: true,
     })
     .select("id")
     .single();

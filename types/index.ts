@@ -24,6 +24,7 @@ export type AlertSeverity = "flag" | "hold";
 export type AuditAction =
   | "sms_sent"
   | "sms_failed"
+  | "sms_opted_out"
   | "reminder_sent"
   | "assessment_opened"
   | "dob_verified"
@@ -35,6 +36,7 @@ export type AuditAction =
   | "alert_created"
   | "clinical_hold_created"
   | "alert_resolved"
+  | "assessment_attested"
   | "pdf_generated"
   | "manual_call_flagged";
 
@@ -48,6 +50,8 @@ export type Patient = {
   medication: string;
   disease_state: string;
   next_refill_date: string; // YYYY-MM-DD
+  sms_consent: boolean;
+  sms_opted_out: boolean;
   created_at: string;
 };
 
@@ -57,6 +61,8 @@ export type Assessment = {
   status: AssessmentStatus;
   missed_doses: boolean | null;
   medication_changes: boolean | null;
+  hospitalized: boolean | null;
+  recent_vaccination: boolean | null;
   pain_score: number | null; // 0–10
   fever: boolean | null;
   infection: boolean | null;
@@ -66,6 +72,8 @@ export type Assessment = {
   delivery_approved: boolean | null;
   risk_outcome: RiskOutcome | null;
   refill_disposition: RefillDisposition | null;
+  attested_by: string | null;
+  attested_at: string | null;
   opened_at: string | null;
   submitted_at: string | null;
   completed_at: string | null;

@@ -11,6 +11,8 @@ type Screen = 1 | 2 | 3 | 4 | "success" | "error";
 type AdherenceState = {
   missed_doses: boolean | null;
   medication_changes: boolean | null;
+  hospitalized: boolean | null;
+  recent_vaccination: boolean | null;
   surgery_upcoming: boolean | null;
 };
 
@@ -34,6 +36,8 @@ export default function AssessmentFlow({ assessmentId, tokenId }: Props) {
   const [adherence, setAdherence] = useState<AdherenceState>({
     missed_doses: null,
     medication_changes: null,
+    hospitalized: null,
+    recent_vaccination: null,
     surgery_upcoming: null,
   });
 
@@ -82,6 +86,8 @@ export default function AssessmentFlow({ assessmentId, tokenId }: Props) {
   const reviewAnswers = {
     missed_doses: adherence.missed_doses ?? false,
     medication_changes: adherence.medication_changes ?? false,
+    hospitalized: adherence.hospitalized ?? false,
+    recent_vaccination: adherence.recent_vaccination ?? false,
     surgery_upcoming: adherence.surgery_upcoming ?? false,
     pain_score: symptoms.pain_score ?? 0,
     fever: symptoms.fever,

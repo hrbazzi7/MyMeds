@@ -227,3 +227,84 @@ Verification script: `scripts/verify-db.ts` (excluded from Next.js build via `ts
 ### Build status
 - `npm run lint` — ✓ zero warnings or errors
 - `npm run build` — ✓ compiled successfully; `/assess/[token]` is dynamic server-rendered
+
+---
+
+## Phase 3 — Spec v0.3 Amendment (2026-06-10)
+
+### Changes applied
+
+Spec was updated from v0.2 to v0.3 after Phase 3 was built. The following brings the codebase into alignment; Phase 4+ features were not pre-built.
+
+### Migration: `20260610000001_v03_amendments.sql`
+
+Applied via `supabase db push`. Recorded in `supabase_migrations.schema_migrations` as timestamp `20260610000001`.
+
+```sql
+ALTER TABLE patients
+  ADD COLUMN IF NOT EXISTS sms_consent   boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS sms_opted_out boolean NOT NULL DEFAULT false;
+
+ALTER TABLE assessments
+  ADD COLUMN IF NOT EXISTS hospitalized       boolean,
+  ADD COLUMN IF NOT EXISTS recent_vaccination  boolean,
+  ADD COLUMN IF NOT EXISTS attested_by         text,
+  ADD COLUMN IF NOT EXISTS attested_at         timestamptz;
+
+ALTER TYPE audit_action ADD VALUE IF NOT EXISTS 'sms_opted_out';
+ALTER TYPE audit_action ADD VALUE IF NOT EXISTS 'assessment_attested';
+```
+
+**`sms_consent DEFAULT false`:** The spec declares this `NOT NULL` without a column default (consent is always provided at CSV import). A migration-time DEFAULT false is required to add the column to an existing table without breaking existing rows. The default value is accurate for existing test data (no real patients yet). Phase 6 CSV import will set this explicitly on every insert.
+
+**`ALTER TYPE ADD VALUE` and transactions:** PostgreSQL 12+ allows `ALTER TYPE ADD VALUE` inside a transaction block, but the new values are not visible until the transaction commits. Since neither `sms_opted_out` nor `assessment_attested` is used in the same migration, running inside Supabase's default transaction is safe. No `-- supabase-no-tx` annotation needed.
+
+### Types updated
+
+**`types/index.ts`:**
+- `Patient`: added `sms_consent: boolean`, `sms_opted_out: boolean`
+- `Assessment`: added `hospitalized: boolean | null`, `recent_vaccination: boolean | null`, `attested_by: string | null`, `attested_at: string | null`
+- `AuditAction`: added `'sms_opted_out'` and `'assessment_attested'` → 17 actions total
+
+**`types/database.ts`:**
+- `patients` Insert: `sms_opted_out` moved to optional (has DB default); `sms_consent` remains required
+- `assessments` Row automatically picks up new fields from updated `Assessment` type
+
+### Patient flow updated
+
+**`components/assess/Screen2Adherence.tsx`**: 3 → 5 Yes/No questions, in spec order:
+1. Missed doses
+2. New medications
+3. **Hospitalized or ER visit** (new)
+4. **Recent / upcoming vaccination** (new)
+5. Upcoming surgery
+
+Spec decision (Resolved): "five Yes/No questions as stacked large-button cards (scroll permitted); five taps under 90 seconds." Same large-button card layout; scroll naturally available on the page.
+
+**`components/assess/AssessmentFlow.tsx`**: `AdherenceState` + initial state + `reviewAnswers` extended with `hospitalized` and `recent_vaccination`.
+
+**`components/assess/Screen4Review.tsx`**: Two new `ReviewRow` entries in the Adherence review card — "Hospitalized / ER visit" and "Recent / upcoming vaccination". Submit call updated to pass all 11 answer fields.
+
+**`app/assess/[token]/actions.ts`**: `AssessmentAnswers` type extended; `submitAssessment` update payload includes `hospitalized` and `recent_vaccination`.
+
+### Scripts updated
+
+**`scripts/verify-db.ts`**: Extended with 12 new checks — new enum values, column existence, default values, and read/write round-trips. Total: 36/36 passed.
+
+**`scripts/setup-test-token.ts`**: Patient insert now includes `sms_consent: true` (required NOT NULL column).
+
+### Verification
+
+- `verify-db.ts` — **36/36 checks passed**
+  - `audit_action 'sms_opted_out'` and `'assessment_attested'` accepted by DB
+  - `patients.sms_consent` column exists, boolean type
+  - `patients.sms_opted_out` column exists, defaults to false
+  - `assessments.hospitalized`, `recent_vaccination`, `attested_by`, `attested_at` columns exist
+  - `hospitalized=true`, `recent_vaccination=false` round-trip correctly
+- Submit with 11 fields (including `hospitalized=true`, `recent_vaccination=true`) saves and reads back correctly
+- Valid token URL → HTTP 200, DOB screen renders
+- Migration `20260610000001` confirmed in remote migration history
+
+### Build status
+- `npm run lint` — ✓ zero warnings or errors
+- `npm run build` — ✓ compiled successfully

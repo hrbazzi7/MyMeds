@@ -3,6 +3,8 @@
 type AdherenceAnswers = {
   missed_doses: boolean | null;
   medication_changes: boolean | null;
+  hospitalized: boolean | null;
+  recent_vaccination: boolean | null;
   surgery_upcoming: boolean | null;
 };
 
@@ -22,6 +24,14 @@ const QUESTIONS: { key: YesNoKey; label: string }[] = [
   {
     key: "medication_changes",
     label: "Have you started any new medications or supplements?",
+  },
+  {
+    key: "hospitalized",
+    label: "Have you been hospitalized or visited an ER since your last refill?",
+  },
+  {
+    key: "recent_vaccination",
+    label: "Have you received or are you scheduled to receive any vaccinations?",
   },
   {
     key: "surgery_upcoming",

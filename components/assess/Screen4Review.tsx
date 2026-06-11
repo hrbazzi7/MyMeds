@@ -110,6 +110,8 @@ export default function Screen4Review({
       const result = await submitAssessment(assessmentId, tokenId, {
         missed_doses: answers.missed_doses,
         medication_changes: answers.medication_changes,
+        hospitalized: answers.hospitalized,
+        recent_vaccination: answers.recent_vaccination,
         surgery_upcoming: answers.surgery_upcoming,
         pain_score: answers.pain_score,
         fever: answers.fever,
@@ -150,6 +152,8 @@ export default function Screen4Review({
         </div>
         <ReviewRow label="Missed doses" value={ynLabel(answers.missed_doses)} />
         <ReviewRow label="New medications" value={ynLabel(answers.medication_changes)} />
+        <ReviewRow label="Hospitalized / ER visit" value={ynLabel(answers.hospitalized)} />
+        <ReviewRow label="Recent / upcoming vaccination" value={ynLabel(answers.recent_vaccination)} />
         <ReviewRow label="Upcoming surgery" value={ynLabel(answers.surgery_upcoming)} />
       </div>
 

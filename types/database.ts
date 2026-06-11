@@ -13,16 +13,17 @@ import type {
 
 // Supabase Database type — passed to createClient<Database>() in lib/supabase/server.ts.
 // Row types are imported from /types/index.ts (single source of truth).
-// Insert types mark auto-generated columns optional; required columns are explicit.
-// Relationships array is required by @supabase/postgrest-js ≥2.x for type inference.
+// Insert types mark auto-generated/defaulted columns optional; required columns are explicit.
+// Relationships: [] is required by @supabase/postgrest-js ≥ 2.x for type inference.
 export type Database = {
   public: {
     Tables: {
       patients: {
         Row: Patient;
-        Insert: Omit<Patient, "id" | "created_at"> & {
+        Insert: Omit<Patient, "id" | "created_at" | "sms_opted_out"> & {
           id?: string;
           created_at?: string;
+          sms_opted_out?: boolean; // DB default false
         };
         Update: Partial<Patient>;
         Relationships: [];
