@@ -466,3 +466,99 @@ The spec's "after day 3 → manual_call_required" is satisfied: timeout fires at
 ### Build status
 - `npm run lint` — ✓ zero warnings or errors
 - `npm run build` — ✓ compiled successfully; `/api/twilio/inbound` now appears as a dynamic route alongside `/api/twilio/status` and `/api/cron/daily`
+
+---
+
+## Phase 6 — Dashboard (2026-06-11)
+
+### What was built
+
+**`app/actions.ts`** — all Server Actions (service-role only, server-side)
+
+- `fetchDashboardData()` — single call returning all four data sets: `AssessmentRow[]` (joined with patients, first alert for escalation_reason), `PatientRow[]` (with `has_open_assessment` precomputed), `EscalationRow[]` (unresolved alerts, holds sorted above flags in JS), `AttestationRow[]` (completed, auto_approved or logged, attested_by null, oldest first), `CallQueueRow[]` (manual_call_required with derived call reason).
+- `importPatientsCsv(formData)` — parses CSV, validates all 7 fields per row with row-number error reporting, normalizes phone to E.164, inserts valid rows, returns `{ inserted, rejected, errors }`. Quoted-field CSV parser handles commas in values.
+- `dispatchSmsToPatient(patientId)` — eligibility-guarded per-patient SMS dispatch; creates assessment + token; on Twilio failure, sets manual_call_required.
+- `dispatchAllDueSms()` — sends to all eligible patients with `next_refill_date` within 7 days and no open assessment; ineligible patients get `manual_call_required` directly.
+- `resolveAlert(alertId, assessmentId, disposition, notes, reviewedBy)` — marks alert resolved, updates assessment to `disposition` / `completed`, logs `alert_resolved`.
+- `attestAssessment(assessmentId, attestedBy)` — sets `attested_by/attested_at`, logs `assessment_attested`.
+- `attestAllAssessments(assessmentIds, attestedBy)` — batch update + batch audit log insert.
+
+All Server Actions call `revalidatePath('/')` so the Server Component refetches live data after every mutation.
+
+**`app/page.tsx`** — replaces placeholder; `dynamic = "force-dynamic"` Server Component; calls `fetchDashboardData()` and renders `<DashboardClient>`.
+
+**`components/dashboard/DashboardClient.tsx`** — Client Component; manages tab state (Assessments / Escalation Queue / Attestation / Call Queue); renders count badges for each tab.
+
+**`components/dashboard/CsvUpload.tsx`** — file input + upload button; shows inserted/rejected summary and per-row error list after import.
+
+**`components/dashboard/PatientDispatch.tsx`** — lists patients due within 7 days with per-patient Send button; "Send all due" bulk button; shows eligibility reason (no consent / opted out / open assessment) for ineligible patients.
+
+**`components/dashboard/AssessmentTable.tsx`** — seven-column table (Patient Name, Medication, Status, Risk Outcome, Refill Disposition, Escalation Reason, Submission Date); seven filter chips (All, Pending, Completed, Needs Review, Clinical Hold, Flagged, Awaiting Attestation) with live counts; pagination (page size 20); client-side filtering of server-loaded data.
+
+**`components/dashboard/EscalationQueue.tsx`** — exception-only view of unresolved alerts; holds rendered with red left border, flags with amber; per-card pharmacist_notes textarea, free-text reviewed_by input (required), Approve / Keep held radio choice, "Mark Resolved" button; calls `resolveAlert` Server Action.
+
+**`components/dashboard/AttestationView.tsx`** — lists completed auto_approved/logged assessments awaiting attestation, oldest first; single pharmacist name field at top; per-row "Attest" button + "Attest all listed" batch button; both call Server Actions that set `attested_by/attested_at` and log `assessment_attested`.
+
+**`components/dashboard/CallQueue.tsx`** — read-only table of `manual_call_required` rows with reason badge (Non-responder / SMS delivery failure / DOB lockout / Refill declined by patient / Address change needed / No SMS consent / SMS opt-out) and summary badge bar.
+
+**`scripts/seed.ts`** — idempotent seed script (deletes rows with `full_name LIKE 'SEED_%'` before inserting). Creates 40 labeled patients:
+
+| Group | Status | Risk | Disposition | Alert | Notes |
+|---|---|---|---|---|---|
+| A (3) | completed | auto_approved | approved | — | attested |
+| B (3) | completed | auto_approved | approved | — | unattested (awaiting attestation) |
+| C (2) | completed | logged | approved | — | attested |
+| D (3) | completed | logged | approved | — | unattested (awaiting attestation) |
+| E (5) | needs_review | flagged | pending_review | flag (unresolved) | one per flag trigger |
+| F (4) | needs_review | clinical_hold | held | hold (unresolved) | one per hold trigger |
+| G (1) | completed | flagged | approved | flag (resolved) | pharmacist approved flag |
+| H (1) | completed | clinical_hold | held | hold (resolved) | pharmacist kept hold |
+| I (4) | pending | — | — | — | due 1–7 days from now |
+| J (2) | in_progress | — | — | — | DOB verified or link opened |
+| K (7) | manual_call_required | varies | varies | — | one per call-queue reason |
+| L (5) | various | various | various | flag/hold | edge cases |
+
+All 7 call-queue reasons seeded: non-responder (K1 — reminders×2), SMS delivery failure (K2), DOB lockout (K3 — 5 dob_failed logs), refill declined (K4 — refill_confirmed=false), address change (K5 — delivery_approved=false), no SMS consent (K6 — sms_consent=false), SMS opt-out (K7 — sms_opted_out=true).
+
+`npm run seed` added to package.json scripts.
+
+### Decisions and assumptions
+
+- **Client-side filtering**: The assessment table filters run on already-loaded data (not a new Server Action call per filter). For the MVP's 50-patient pilot this is correct and avoids unnecessary round-trips. If the dataset grows past hundreds of rows, a server-side pagination strategy would be warranted — documented here as a known gap.
+- **Escalation queue shows unresolved alerts only**: Once resolved, alerts drop off the queue. The assessment table's Escalation Reason column still shows the reason (from the alert row) for historical reference on any status.
+- **Call-queue reason derivation**: Derived at query time from patient fields + audit log actions (not a stored column). Priority order: no consent → opted-out → DOB lockout (≥5 `dob_failed` logs) → sms_failed log → refill_confirmed=false → delivery_approved=false → non-responder (default).
+- **Attestation row disappears on attest**: After `attestAssessment` calls `revalidatePath('/')`, the Server Component refetches and the attested row no longer appears in the attestation queue (since `attested_by` is now non-null). This is correct and tested — the row count decreases by 1 per attestation.
+- **`base_url` in Server Actions**: Derived from `await headers()` (`x-forwarded-proto` + `host`) within each dispatch Server Action — same approach as the Phase 5 cron route.
+- **`playwright` dev dependency**: Installed temporarily for in-session browser verification. Removed from `package.json` after verification. Not part of the spec stack.
+
+### Known gaps
+
+- **No staff authentication** (Phase 8): The dashboard has zero access control. Every deployment must sit behind platform-level password protection (e.g., Vercel password protection or basic auth at the CDN/proxy level). This is a hard requirement before any real patient data enters the system.
+- **Per-patient SMS dispatch in Patients list**: The dispatch panel only shows patients due within 7 days. A future improvement could show all patients with a manual send option regardless of refill date. Not in the spec for this phase.
+- **Pagination is client-side**: See Decisions above.
+
+### Verification (in dev server with seed data)
+
+All steps performed with Playwright (headless Chromium) against `http://localhost:3000` with 40 seeded patients.
+
+| Step | Result |
+|---|---|
+| Valid CSV (2 rows) | "2 inserted, 0 rejected" confirmed |
+| Malformed CSV (2 rows — bad date, bad consent) | "2 error rows" with row numbers and specific messages |
+| Filter All | 44 rows (40 seed + 2 CSVTEST imports) |
+| Filter Pending | 4 rows ✓ |
+| Filter Completed | 15 rows ✓ |
+| Filter Needs Review | 13 rows ✓ |
+| Filter Clinical Hold | 9 rows ✓ |
+| Filter Flagged | 8 rows ✓ |
+| Filter Awaiting Attestation | 7 rows ✓ |
+| Escalation queue | 14 unresolved alerts; holds (red border) listed above flags (amber border) |
+| Resolve hold (approved) | Alert disappeared; queue 14 → 13 |
+| Resolve flag (kept held) | Alert disappeared; queue 13 → 12 |
+| Attest one row | Row removed from attestation queue; count decremented |
+| Attest all listed | Queue cleared to 0 rows; tab badge removed |
+| Call queue — 7 reasons | All 7 reason badges present: Non-responder ✓ / SMS delivery failure ✓ / DOB lockout ✓ / Refill declined by patient ✓ / Address change needed ✓ / No SMS consent ✓ / SMS opt-out ✓ |
+
+### Build status
+- `npm run lint` — ✓ zero warnings or errors
+- `npm run build` — ✓ compiled successfully; `/` is dynamic server-rendered

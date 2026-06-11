@@ -1,7 +1,9 @@
-export default function Home() {
-  return (
-    <main className="min-h-screen flex items-center justify-center p-8">
-      <h1 className="text-2xl font-semibold">MyMeds</h1>
-    </main>
-  );
+import { fetchDashboardData } from "@/app/actions";
+import DashboardClient from "@/components/dashboard/DashboardClient";
+
+export const dynamic = "force-dynamic";
+
+export default async function DashboardPage() {
+  const data = await fetchDashboardData();
+  return <DashboardClient initialData={data} />;
 }
