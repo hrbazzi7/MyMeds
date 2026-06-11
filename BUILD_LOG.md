@@ -308,3 +308,161 @@ Spec decision (Resolved): "five Yes/No questions as stacked large-button cards (
 ### Build status
 - `npm run lint` — ✓ zero warnings or errors
 - `npm run build` — ✓ compiled successfully
+
+---
+
+## Phase 4 — Clinical Rules Engine (2026-06-10)
+
+### What was built
+
+**`lib/rules.ts`** — pure synchronous function, no async, no DB calls.
+
+- `evaluateRules(input: RulesInput): RulesResult` implements spec precedence exactly: CLINICAL HOLD > FLAGGED > LOGGED > AUTO-APPROVED (first match wins).
+- Hold triggers (any one sufficient): `fever`, `infection`, `pregnancy_status`, `surgery_upcoming` → `clinical_hold / held / needs_review / hold alert`
+- Flag triggers (any one sufficient): `pain_score ≥ 7`, `missed_doses`, `medication_changes`, `hospitalized`, `recent_vaccination` → `flagged / pending_review / needs_review / flag alert`
+- Logged (mutually exclusive with above): `pain_score 4–6` → `logged / approved / completed / null alert`
+- Auto-approved: all clear → `auto_approved / approved / completed / null alert`
+- Post-evaluation overrides applied after base outcome: `refill_confirmed = false` → `refill_disposition = declined_by_patient, status = manual_call_required`; `delivery_approved = false` → `status = manual_call_required`. Both can apply to any outcome including holds and flags.
+- `escalation_reason` is a human-readable comma-separated list of all triggered conditions (empty string for auto_approved).
+- Uses relative import `../types/index` (not `@/` alias) so the module resolves correctly when compiled by `tsx` for the test script.
+
+**`scripts/test-rules.ts`** — 17 test cases using `node:assert/strict` only (no test framework per CLAUDE_RULES.md).
+
+| # | Case | Expected |
+|---|------|----------|
+| 1 | fever | clinical_hold, held, needs_review, hold |
+| 2 | infection | clinical_hold, held, needs_review, hold |
+| 3 | pregnancy_status | clinical_hold, held, needs_review, hold |
+| 4 | surgery_upcoming | clinical_hold, held, needs_review, hold |
+| 5 | pain_score=7 | flagged, pending_review, needs_review, flag |
+| 6 | missed_doses | flagged, pending_review, needs_review, flag |
+| 7 | medication_changes | flagged, pending_review, needs_review, flag |
+| 8 | hospitalized | flagged, pending_review, needs_review, flag |
+| 9 | recent_vaccination | flagged (not hold) |
+| 10 | pain=3 | auto_approved, approved, completed, null |
+| 11 | pain=4 | logged, approved, completed, null |
+| 12 | pain=6 | logged, approved, completed, null |
+| 13 | pain=7 | flagged, not logged |
+| 14 | fever + pain=8 | clinical_hold (hold beats flag) |
+| 15 | refill_confirmed=false, clean | auto_approved base + declined_by_patient + manual_call_required |
+| 16 | surgery_upcoming + delivery_approved=false | clinical_hold + held + manual_call_required |
+| 17 | all-clear | auto_approved, approved, completed, null, empty reason |
+
+**Test run: 17/17 passed** (`npm run test:rules`)
+
+**`app/assess/[token]/actions.ts`** — `submitAssessment` updated:
+
+- Imports `evaluateRules` via relative path `../../../lib/rules`
+- Calls `evaluateRules(answers)` after token and assessment re-validation
+- Assessment `UPDATE` now includes all rules outcomes: `risk_outcome`, `refill_disposition`, `status`; includes `completed_at = now()` when `status === "completed"`
+- Creates `alerts` row when `alert_severity !== null` (hold or flag)
+- Batch `audit_logs` INSERT (single round-trip):
+  - Always: `assessment_submitted`, `risk_evaluated`
+  - If `clinical_hold`: `clinical_hold_created`
+  - If `flagged`: `alert_created`
+  - If `auto_approved`: `auto_approved`
+  - If `!refill_confirmed`: `manual_call_flagged`
+  - If `!delivery_approved`: `manual_call_flagged`
+
+**`package.json`** — added `"test:rules": "npx tsx scripts/test-rules.ts"`
+
+### Build status
+- `npm run test:rules` — ✓ 17/17 passed
+- `npm run lint` — ✓ zero warnings or errors
+- `npm run build` — ✓ compiled successfully
+
+---
+
+## Phase 5 — SMS System (2026-06-10)
+
+### What was built
+
+**`lib/sms.ts`** — `sendAssessmentSms(patient, tokenStr, baseUrl)`
+
+- Eligibility guard enforced inside the function (not at call sites): returns `{ sent: false, reason: "ineligible" }` if `sms_consent = false` or `sms_opted_out = true`. This applies to all callers: dispatch, reminders, and any future manual dispatch.
+- SMS body uses first name only (no PHI): `Hi ${firstName}, your monthly refill review is ready. Complete here: ${baseUrl}/assess/${tokenStr}`
+- Tokens are opaque random strings — no patient ID, name, or medication in URL or body
+- Delegates to `lib/twilio.ts` `sendSms`; propagates errors as `{ sent: false, reason }` without re-throwing
+
+**`app/api/cron/daily/route.ts`** — GET handler, `dynamic = "force-dynamic"`
+
+- Auth: `Authorization: Bearer ${CRON_SECRET}` header required; 401 on mismatch
+- Base URL reconstructed from `x-forwarded-proto` + `host` headers (not hardcoded)
+- **(a) Auto-dispatch** — patients with `next_refill_date = today + 7 days`:
+  - Skips patients with an existing non-terminal assessment (`pending | in_progress | needs_review`)
+  - Creates assessment with `status = pending`
+  - If SMS ineligible: immediately sets `status = manual_call_required`, logs `manual_call_flagged`
+  - If eligible: creates token (`randomBytes(48).toString("hex")`, 96h expiry), calls `sendAssessmentSms`; on success logs `sms_sent`; on failure sets `manual_call_required` + logs `manual_call_flagged`
+- **(b) Reminders** — `pending | in_progress` assessments 24–72h old:
+  - Day-2 reminder: age 24–48h AND `reminder_sent` count = 0
+  - Day-3 reminder: age 48–72h AND `reminder_sent` count = 1
+  - Re-checks SMS eligibility via `sendAssessmentSms` (eligibility guard)
+  - Reuses existing unexpired+unused token; skips if no valid token (timeout handler covers escalation)
+  - Logs `reminder_sent` on success
+- **(c) Timeouts** — `pending | in_progress` assessments older than 72h → `manual_call_required` + `manual_call_flagged`
+- Returns JSON summary: `{ ok, dispatched, manual_dispatch_required, reminders_sent, timedout, errors }`
+
+**`app/api/twilio/status/route.ts`** — POST handler, `dynamic = "force-dynamic"`
+
+- Parses `application/x-www-form-urlencoded` body via `req.formData()`
+- Validates Twilio signature: reconstructs URL from `x-forwarded-proto` + `host` headers; calls `validateWebhookSignature(signature, url, params)` from `lib/twilio.ts`; 403 on mismatch
+- Acts only on `MessageStatus = "failed" | "undelivered"`
+- Looks up patient by `To` phone field (E.164)
+- Finds most recent `pending | in_progress` assessment for that patient
+- Updates to `manual_call_required` + inserts `sms_failed` and `manual_call_flagged` audit logs in one batch insert
+- Returns 200 `{ ok: true }` for all non-failure statuses (Twilio expects 200)
+
+### Design decisions
+- Dispatch eligibility enforced in `sendAssessmentSms`, not in cron or webhook — single enforcement point per spec
+- `crypto.randomBytes` used for all token generation (never `Math.random`)
+- No PHI in SMS body, link URL, console output, or audit log `escalation_reason` field
+- Twilio signature validation done before any DB reads — fail fast on invalid requests
+- Reminder count determined from audit log `reminder_sent` entries rather than a separate counter column — avoids schema change and is idempotent
+
+### Build status
+- `npm run lint` — ✓ zero warnings or errors
+- `npm run build` — ✓ compiled successfully; `/api/cron/daily` and `/api/twilio/status` both listed as dynamic server-rendered routes
+
+---
+
+## Phase 5 — Inbound Opt-Out Webhook + Cron Timeout Audit (2026-06-10)
+
+### What was fixed / added
+
+**Missing deliverable: `app/api/twilio/inbound/route.ts`** — POST handler, `dynamic = "force-dynamic"`
+
+- Parses `application/x-www-form-urlencoded` body via `req.formData()`
+- Validates Twilio signature before any DB access: reconstructs URL from `x-forwarded-proto` + `host`; 403 on mismatch
+- Normalizes inbound body: `.trim().toUpperCase()` then tests against `Set(["STOP", "UNSUBSCRIBE", "CANCEL", "QUIT"])`
+- Unrecognized body → 200 `{ ok: true }`, no action
+- On opt-out keyword:
+  1. Looks up patient by `From` phone (E.164 match)
+  2. Sets `patients.sms_opted_out = true`
+  3. Inserts `sms_opted_out` audit log (`assessment_id` omitted — nullable column, no assessment context for a carrier-level reply)
+  4. Finds all `pending | in_progress` assessments for that patient
+  5. For each: sets `status = manual_call_required`, inserts `manual_call_flagged` audit log
+- Unknown `From` phone → 200, no action (Twilio already enforces the opt-out at carrier level; MyMeds state update is opportunistic)
+
+### Cron timeout ordering — verified correct, no code change
+
+Concern: could the timeout fire before the day-3 reminder has a chance to run?
+
+Analysis: The two Postgres queries are mutually exclusive on the 72h boundary:
+- Reminder window: `gte("created_at", cutoff72h)` — assessments `created_at >= now − 72h` (inclusive)
+- Timeout window:  `lt("created_at",  cutoff72h)` — assessments `created_at <  now − 72h` (exclusive)
+
+An assessment created exactly 72h ago satisfies `>=` (reminder window) but not `<` (timeout window). It receives a day-3 reminder in section (b); the timeout check in section (c) of the same run does not match it. The timeout fires for that assessment on the *next* cron run (~T+96h). Reminder section always runs before timeout section within the same run.
+
+Concrete trace (daily cron, assessment created at T+0):
+| Run | Age | Section (b) | Section (c) |
+|-----|-----|-------------|-------------|
+| T+24h | 24h | isDay2 = TRUE → reminder 1 | age < 72h → no timeout |
+| T+48h | 48h | isDay3 = TRUE (count=1) → reminder 2 | age < 72h → no timeout |
+| T+72h | 72h | age=72h, count=2 → neither isDay2 nor isDay3 | age = 72h, `lt` = FALSE → no timeout |
+| T+96h | 96h | age > 72h, not in reminder window | age > 72h, `lt` = TRUE → **timeout** |
+
+The spec's "after day 3 → manual_call_required" is satisfied: timeout fires at T+96h, strictly after the day-3 reminder window (T+48h–T+72h). No code change required.
+
+### Build status
+- `npm run lint` — ✓ zero warnings or errors
+- `npm run build` — ✓ compiled successfully; `/api/twilio/inbound` now appears as a dynamic route alongside `/api/twilio/status` and `/api/cron/daily`

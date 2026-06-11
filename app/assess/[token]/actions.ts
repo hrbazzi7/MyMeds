@@ -1,6 +1,7 @@
 "use server";
 
 import { createServerClient } from "@/lib/supabase/server";
+import { evaluateRules } from "../../../lib/rules";
 import type { AuditAction } from "@/types/index";
 
 async function logAudit(
@@ -152,6 +153,10 @@ export async function submitAssessment(
     return { ok: false, error: "Session expired. Please call your pharmacy." };
   }
 
+  const patientId = assessment.patient_id;
+  const rulesResult = evaluateRules(answers);
+  const now = new Date().toISOString();
+
   const { error: updateErr } = await db
     .from("assessments")
     .update({
@@ -166,8 +171,11 @@ export async function submitAssessment(
       pregnancy_status: answers.pregnancy_status,
       refill_confirmed: answers.refill_confirmed,
       delivery_approved: answers.delivery_approved,
-      submitted_at: new Date().toISOString(),
-      status: "needs_review",
+      submitted_at: now,
+      risk_outcome: rulesResult.risk_outcome,
+      refill_disposition: rulesResult.refill_disposition,
+      status: rulesResult.status,
+      ...(rulesResult.status === "completed" ? { completed_at: now } : {}),
     })
     .eq("id", assessmentId);
 
@@ -175,12 +183,40 @@ export async function submitAssessment(
     return { ok: false, error: "Something went wrong. Please try again." };
   }
 
-  await db
-    .from("assessment_tokens")
-    .update({ used: true })
-    .eq("id", tokenId);
+  await db.from("assessment_tokens").update({ used: true }).eq("id", tokenId);
 
-  await logAudit(assessment.patient_id, assessmentId, "assessment_submitted");
+  // Create alert record if this outcome warrants one
+  if (rulesResult.alert_severity !== null) {
+    await db.from("alerts").insert({
+      patient_id: patientId,
+      assessment_id: assessmentId,
+      severity: rulesResult.alert_severity,
+      escalation_reason: rulesResult.escalation_reason,
+    });
+  }
+
+  // Batch audit log insert
+  const auditRows: { patient_id: string; assessment_id: string; action: AuditAction }[] = [
+    { patient_id: patientId, assessment_id: assessmentId, action: "assessment_submitted" },
+    { patient_id: patientId, assessment_id: assessmentId, action: "risk_evaluated" },
+  ];
+
+  if (rulesResult.risk_outcome === "clinical_hold") {
+    auditRows.push({ patient_id: patientId, assessment_id: assessmentId, action: "clinical_hold_created" });
+  } else if (rulesResult.risk_outcome === "flagged") {
+    auditRows.push({ patient_id: patientId, assessment_id: assessmentId, action: "alert_created" });
+  } else if (rulesResult.risk_outcome === "auto_approved") {
+    auditRows.push({ patient_id: patientId, assessment_id: assessmentId, action: "auto_approved" });
+  }
+
+  if (!answers.refill_confirmed) {
+    auditRows.push({ patient_id: patientId, assessment_id: assessmentId, action: "manual_call_flagged" });
+  }
+  if (!answers.delivery_approved) {
+    auditRows.push({ patient_id: patientId, assessment_id: assessmentId, action: "manual_call_flagged" });
+  }
+
+  await db.from("audit_logs").insert(auditRows);
 
   return { ok: true };
 }
