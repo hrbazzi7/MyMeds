@@ -13,8 +13,6 @@ import type {
   PdfData,
 } from "@/types/index";
 
-export type { PdfData };
-
 // ── Return types ──────────────────────────────────────────────────────────────
 
 export type AssessmentRow = {

@@ -641,3 +641,47 @@ All 3 PDFs: 9–10 KB each, downloaded successfully from "↓ PDF" buttons in th
 - `npm run seed` — ✓ 42 patients inserted (40 original + 2 Phase 7 PDF-verify patients)
 - `npm run lint` — ✓ zero warnings or errors
 - `npm run build` — ✓ compiled successfully; dashboard `/` 119 kB first-load JS (includes jsPDF bundle)
+
+---
+
+## MVP QA + Certification (2026-06-11)
+
+### Scope
+
+End-to-end QA against all items in the spec's MVP Definition of Done. Run via `scripts/qa_mvp.ts` using Playwright (headless Chromium) + Supabase service-role DB verification against the live dev server.
+
+**Result: 120/120 checks pass. `MVP_READY.md` written.**
+
+### Bugs found and fixed
+
+**Bug 1 — `app/api/cron/daily/route.ts`: SMS failure path only logged `manual_call_flagged`**  
+When the cron auto-dispatch path sends SMS and it fails (Twilio error), the code only inserted a `manual_call_flagged` audit log. It did not insert `sms_failed`, unlike the `dispatchSmsToPatient` action which inserts both. This meant patients whose initial SMS dispatch failed via the cron appeared as "Non-responder" in the technician call queue rather than "SMS delivery failure."  
+Fix: Changed single-insert to array-insert of both `sms_failed` and `manual_call_flagged`.
+
+**Bug 2 — `lib/twilio.ts`: `validateWebhookSignature` threw when `TWILIO_TOKEN` unset**  
+`validateWebhookSignature` called `requireEnv("TWILIO_TOKEN")`, which throws `Error: Missing required environment variable: TWILIO_TOKEN`. With `TWILIO_TOKEN=` (empty), the Twilio webhook routes `/api/twilio/status` and `/api/twilio/inbound` returned HTTP 500 instead of 403.  
+Fix: Changed to read `process.env.TWILIO_TOKEN` directly and return `false` (→ 403) when unset, rather than throwing.
+
+**Bug 3 — `app/actions.ts`: `export type { PdfData }` broke Turbopack RSC analysis**  
+Phase 7 added `export type { PdfData }` to `app/actions.ts` so client components could import the type from the same module as the server action. Turbopack's RSC module boundary analysis attempted to find `PdfData` as a runtime export and failed with "Export PdfData doesn't exist in target module", causing the dashboard to 500 on every load.  
+Fix: Removed the re-export. `PdfData` is defined in `types/index.ts` and `lib/pdf.ts` already imports it from there directly. No component needs to import `PdfData` from `app/actions.ts`.
+
+### QA checks by section
+
+| Section | Checks | Result |
+|---|---|---|
+| SMS template + PHI | 6 | 6/6 PASS |
+| CSV import | 4 | 4/4 PASS |
+| Cron auto-dispatch | 8 | 8/8 PASS |
+| Patient flow + DOB | 11 | 11/11 PASS |
+| Rules engine in vivo (9 cases) | 51 | 51/51 PASS |
+| Reminders + timeout + Twilio callback | 9 | 9/9 PASS |
+| Dashboard (filters, escalation, call queue) | 12 | 12/12 PASS |
+| PDF generation (hold + logged) | 18 | 18/18 PASS |
+| Non-goals check | 10 | 10/10 PASS |
+| Zero unsafe auto-approvals | 2 | 2/2 PASS |
+| **Total** | **120** | **120/120 PASS** |
+
+### Build status (post-QA)
+- `npm run lint` — ✓ zero warnings or errors
+- `npm run build` — ✓ compiled successfully; all 6 routes built clean

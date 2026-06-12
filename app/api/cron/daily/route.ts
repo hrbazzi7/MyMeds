@@ -100,11 +100,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         .from("assessments")
         .update({ status: "manual_call_required" })
         .eq("id", assessmentId);
-      await db.from("audit_logs").insert({
-        patient_id: patient.id,
-        assessment_id: assessmentId,
-        action: "manual_call_flagged",
-      });
+      await db.from("audit_logs").insert([
+        { patient_id: patient.id, assessment_id: assessmentId, action: "sms_failed" as const },
+        { patient_id: patient.id, assessment_id: assessmentId, action: "manual_call_flagged" as const },
+      ]);
       summary.manual_dispatch_required++;
     }
   }

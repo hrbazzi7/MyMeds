@@ -19,11 +19,13 @@ export async function sendSms(to: string, body: string): Promise<void> {
 
 // Validate an inbound Twilio webhook request signature.
 // Used in /api/twilio/status (Phase 5).
+// Returns false (→ 403) when TWILIO_TOKEN is not configured rather than throwing.
 export function validateWebhookSignature(
   signature: string,
   url: string,
   params: Record<string, string>
 ): boolean {
-  const authToken = requireEnv("TWILIO_TOKEN");
+  const authToken = process.env.TWILIO_TOKEN;
+  if (!authToken) return false;
   return twilio.validateRequest(authToken, signature, url, params);
 }
