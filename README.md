@@ -2,7 +2,9 @@
 
 > Replacing manual pharmacist phone calls with a secure, SMS-based patient assessment system built for specialty pharmacy operations.
 
-![Dashboard](screenshots/dashboard.png)
+<img width="1570" height="1079" alt="image" src="https://github.com/user-attachments/assets/7252ba26-34e0-4ef1-834c-63d166fd249b" />
+
+
 
 ---
 
@@ -21,18 +23,15 @@ MyMeds automates that workflow:
 Worst case: the system handles nothing and technicians call the same patients they would have called anyway. Best case: 70%+ of patients self-complete and assessment labor drops dramatically.
 
 ---
-
 ## Screenshots
 
 | Patient SMS Flow | Pharmacist Dashboard |
 |---|---|
-| ![SMS Flow](screenshots/sms-flow.png) | ![Dashboard](screenshots/dashboard.png) |
+| ![SMS Flow](https://github.com/user-attachments/assets/2bb857bf-05d2-4d4c-9863-2592b1b9bad2) | ![Dashboard](https://github.com/user-attachments/assets/db479006-04cb-4eca-88e9-8c42e8e68b22) |
 
 | Escalation Queue | Audit PDF |
 |---|---|
-| ![Escalation](screenshots/escalation.png) | ![PDF](screenshots/pdf.png) |
-
-> **To add screenshots:** drop your images into a `/screenshots` folder in the repo root and they'll appear above automatically.
+| ![Escalation](https://github.com/user-attachments/assets/db479006-04cb-4eca-88e9-8c42e8e68b22) | ![PDF](https://github.com/user-attachments/assets/8c0339c4-470f-4c0e-954f-3ff69295077a) |
 
 ---
 
